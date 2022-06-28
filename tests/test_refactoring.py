@@ -1,26 +1,23 @@
-import gym_multi_deepracer
-import gym
 import random
+from gym_multi_deepracer import MultiDeepRacer
 
-NUM_CARS = 2
+NUM_CARS = 1
 
 
 def my_policy(obs):
     actions = [
         [-1.0, 0.0, 0.0],  # Turn_left
         [+1.0, 0.0, 0.0],  # Turn_right
-        [0.0, 0.0, 0.8],  # Brake
+        #[0.0, 0.0, 0.8],  # Brake
         [0.0, 1.0, 0.0],  # Accelerate
-        [0.0, 0.0, 0.0],  # Do-Nothing
+        #[0.0, 0.0, 0.0],  # Do-Nothing
     ]
     action = [random.choice(actions) for _ in range(NUM_CARS)]
     return action
 
 
 def test_refactoring():
-    env = gym.make("MultiDeepRacer-v0")
-
-    env.env.world_init(
+    env = MultiDeepRacer(
         num_agents=NUM_CARS,
         direction="CCW",
         use_random_direction=True,
@@ -28,10 +25,8 @@ def test_refactoring():
         h_ratio=0.25,
         use_ego_color=False,
     )
-    
-    print(dir(env))
-
     obs = env.reset()
+
     done = False
     total_reward = 0
 

@@ -3,22 +3,21 @@ import numpy as np
 
 import Box2D
 from Box2D.b2 import (
-    edgeShape,
-    circleShape,
     fixtureDef,
     polygonShape,
-    revoluteJointDef,
     contactListener,
 )
 
 import gym
 import gym.envs.box2d.car_dynamics as car_dynamics
 from gym import spaces
-from gym.utils import colorize, seeding, EzPickle
+from gym.utils import seeding, EzPickle
 
 import pyglet
 from pyglet import gl
 from shapely.geometry import Point, Polygon
+
+from friction_detector import FrictionDetector
 
 # Easiest continuous control task to learn from pixels, a top-down racing environment.
 # Discrete control is reasonable in this environment as well, on/off discretization is
@@ -45,7 +44,7 @@ from shapely.geometry import Point, Polygon
 # Remember it's powerful rear-wheel drive car, don't press accelerator and turn at the
 # same time.
 #
-# Created by Oleg Klimov. Licensed on the same terms as the rest of OpenAI Gym.
+# Created by Gianluigi Mucciolo. Licensed on the same terms as the rest of OpenAI Gym.
 
 STATE_W = 96
 STATE_H = 96
@@ -92,69 +91,13 @@ BACKWARD_THRESHOLD = np.pi / 2
 K_BACKWARD = 0  # Penalty weight: backwards_penalty = K_BACKWARD * angle_diff  (if angle_diff > BACKWARD_THRESHOLD)
 
 
-class FrictionDetector(contactListener):
-    def __init__(self, env):
-        contactListener.__init__(self)
-        self.env = env
-
-    def BeginContact(self, contact):
-        self._contact(contact, True)
-
-    def EndContact(self, contact):
-        self._contact(contact, False)
-
-    def _contact(self, contact, begin):
-        tile = None
-        obj = None
-        u1 = contact.fixtureA.body.userData
-        u2 = contact.fixtureB.body.userData
-        if u1 and "road_friction" in u1.__dict__:
-            tile = u1
-            obj = u2
-        if u2 and "road_friction" in u2.__dict__:
-            tile = u2
-            obj = u1
-        if not tile:
-            return
-
-        tile.color[0] = ROAD_COLOR[0]
-        tile.color[1] = ROAD_COLOR[1]
-        tile.color[2] = ROAD_COLOR[2]
-
-        # This check seems to implicitly make sure that we only look at wheels as the tiles
-        # attribute is only set for wheels in car_dynamics.py.
-        if not obj or "tiles" not in obj.__dict__:
-            return
-        if begin:
-            obj.tiles.add(tile)
-            # print tile.road_friction, "ADD", len(obj.tiles)
-            if not tile.road_visited[obj.car_id]:
-                tile.road_visited[obj.car_id] = True
-                self.env.tile_visited_count[obj.car_id] += 1
-
-                # The reward is dampened on tiles that have been visited already.
-                past_visitors = sum(tile.road_visited) - 1
-                reward_factor = 1 - (past_visitors / self.env.num_agents)
-                self.env.reward[obj.car_id] += (
-                    reward_factor * 1000.0 / len(self.env.track)
-                )
-        else:
-            obj.tiles.remove(tile)
-            # print tile.road_friction, "DEL", len(obj.tiles) -- should delete to zero when on grass (this works)
-
-
 class MultiDeepRacer(gym.Env, EzPickle):
     metadata = {
         "render.modes": ["human", "rgb_array", "state_pixels"],
         "video.frames_per_second": FPS,
     }
 
-    def __init__(self):
-        super(MultiDeepRacer, self).__init__()
-        EzPickle.__init__(self)
-        self.seed()
-
-    def world_init(
+    def __init__(
         self,
         num_agents=1,
         use_random_direction=True,
@@ -164,9 +107,15 @@ class MultiDeepRacer(gym.Env, EzPickle):
         verbose=1,
         use_ego_color=True,
     ):
+        super(MultiDeepRacer, self).__init__()
+        EzPickle.__init__(self)
+        self.seed()
 
+        self.new_lap = False
         self.num_agents = num_agents
-        self.contactListener_keepref = FrictionDetector(self)
+        self.contactListener_keepref = FrictionDetector(
+            self, lap_complete_percent=0.95, road_color=ROAD_COLOR
+        )
         self.world = Box2D.b2World((0, 0), contactListener=self.contactListener_keepref)
         self.viewer = [None] * num_agents
         self.invisible_state_window = None
@@ -208,8 +157,6 @@ class MultiDeepRacer(gym.Env, EzPickle):
         self.observation_space = spaces.Box(
             low=0, high=255, shape=(STATE_H, STATE_W, 3)
         )
-
-        return self
 
     def seed(self, seed=None):
         self.np_random, seed = seeding.np_random(seed)
@@ -383,6 +330,7 @@ class MultiDeepRacer(gym.Env, EzPickle):
             t.color = [ROAD_COLOR[0] + c, ROAD_COLOR[1] + c, ROAD_COLOR[2] + c]
             t.road_visited = [False] * self.num_agents
             t.road_friction = 1.0
+            t.idx = i
             t.fixtures[0].sensor = True
             self.road_poly.append(([road1_l, road1_r, road2_r, road2_l], t.color))
             self.road.append(t)
@@ -509,6 +457,8 @@ class MultiDeepRacer(gym.Env, EzPickle):
 
         self.state = self.render("state_pixels")
 
+        
+
         step_reward = np.zeros(self.num_agents)
         done = False
         if action is not None:  # First step without action, called from reset()
@@ -588,6 +538,7 @@ class MultiDeepRacer(gym.Env, EzPickle):
                     done = True
                     step_reward[car_id] = -100
 
+        step_reward = [0 if r < 0 else 1 for r in step_reward]
         return self.state, step_reward, done, {}
 
     def render(self, mode="human", close=False):
@@ -781,84 +732,3 @@ class MultiDeepRacer(gym.Env, EzPickle):
                 ("v2i", (W - 100, 30, W - 75, 70, W - 50, 30)),
                 ("c3B", (0, 0, 255) * 3),
             )
-
-
-if __name__ == "__main__":
-    from pyglet.window import key
-
-    NUM_CARS = 2  # Supports key control of two cars, but can simulate as many as needed
-
-    # Specify key controls for cars
-    CAR_CONTROL_KEYS = [
-        [key.LEFT, key.RIGHT, key.UP, key.DOWN],
-        [key.A, key.D, key.W, key.S],
-    ]
-
-    a = np.zeros((NUM_CARS, 3))
-
-    def key_press(k, mod):
-        global restart, stopped, CAR_CONTROL_KEYS
-        if k == 0xFF1B:
-            stopped = True  # Terminate on esc.
-        if k == 0xFF0D:
-            restart = True  # Restart on Enter.
-
-        # Iterate through cars and assign them control keys (mod num controllers)
-        for i in range(min(len(CAR_CONTROL_KEYS), NUM_CARS)):
-            if k == CAR_CONTROL_KEYS[i % len(CAR_CONTROL_KEYS)][0]:
-                a[i][0] = -1.0
-            if k == CAR_CONTROL_KEYS[i % len(CAR_CONTROL_KEYS)][1]:
-                a[i][0] = +1.0
-            if k == CAR_CONTROL_KEYS[i % len(CAR_CONTROL_KEYS)][2]:
-                a[i][1] = +1.0
-            if k == CAR_CONTROL_KEYS[i % len(CAR_CONTROL_KEYS)][3]:
-                a[i][2] = +0.8  # set 1.0 for wheels to block to zero rotation
-
-    def key_release(k, mod):
-        global CAR_CONTROL_KEYS
-
-        # Iterate through cars and assign them control keys (mod num controllers)
-        for i in range(min(len(CAR_CONTROL_KEYS), NUM_CARS)):
-            if k == CAR_CONTROL_KEYS[i % len(CAR_CONTROL_KEYS)][0] and a[i][0] == -1.0:
-                a[i][0] = 0
-            if k == CAR_CONTROL_KEYS[i % len(CAR_CONTROL_KEYS)][1] and a[i][0] == +1.0:
-                a[i][0] = 0
-            if k == CAR_CONTROL_KEYS[i % len(CAR_CONTROL_KEYS)][2]:
-                a[i][1] = 0
-            if k == CAR_CONTROL_KEYS[i % len(CAR_CONTROL_KEYS)][3]:
-                a[i][2] = 0
-
-    env = MultiCarRacing(NUM_CARS)
-    env.render()
-    for viewer in env.viewer:
-        viewer.window.on_key_press = key_press
-        viewer.window.on_key_release = key_release
-    record_video = False
-    if record_video:
-        from gym.wrappers.monitor import Monitor
-
-        env = Monitor(env, "/tmp/video-test", force=True)
-    isopen = True
-    stopped = False
-    while isopen and not stopped:
-        env.reset()
-        total_reward = np.zeros(NUM_CARS)
-        steps = 0
-        restart = False
-        while True:
-            s, r, done, info = env.step(a)
-            total_reward += r
-            if steps % 200 == 0 or done:
-                print(
-                    "\nActions: "
-                    + str.join(" ", [f"Car {x}: " + str(a[x]) for x in range(NUM_CARS)])
-                )
-                print(f"Step {steps} Total_reward " + str(total_reward))
-                # import matplotlib.pyplot as plt
-                # plt.imshow(s)
-                # plt.savefig("test.jpeg")
-            steps += 1
-            isopen = env.render().all()
-            if stopped or done or restart or isopen == False:
-                break
-    env.close()
