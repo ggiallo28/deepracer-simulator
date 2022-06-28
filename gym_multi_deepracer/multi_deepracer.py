@@ -367,6 +367,7 @@ class MultiDeepRacer(gym.Env, EzPickle):
         self.prev_reward = np.zeros(self.num_agents)
         self.tile_visited_count = [0] * self.num_agents
         self.t = 0.0
+        self.steps = 0.0
         self.road_poly = []
 
         # Reset driving backwards/on-grass states and track direction
@@ -454,10 +455,9 @@ class MultiDeepRacer(gym.Env, EzPickle):
             car.step(1.0 / FPS)
         self.world.Step(1.0 / FPS, 6 * 30, 2 * 30)
         self.t += 1.0 / FPS
+        self.steps += 1.0
 
         self.state = self.render("state_pixels")
-
-        
 
         step_reward = np.zeros(self.num_agents)
         done = False

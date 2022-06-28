@@ -1,5 +1,6 @@
 from Box2D.b2 import contactListener
 
+
 class FrictionDetector(contactListener):
     def __init__(self, env, lap_complete_percent, road_color):
         contactListener.__init__(self)

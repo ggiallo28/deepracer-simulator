@@ -2,7 +2,7 @@ import random
 from gym_multi_deepracer import MultiDeepRacer
 
 NUM_CARS = 1
-
+STEPS_TEST_LIMIT = 10
 
 def my_policy(obs):
     actions = [
@@ -30,7 +30,8 @@ def test_refactoring():
     done = False
     total_reward = 0
 
-    while not done:
+    steps = 0
+    while not done or steps < STEPS_TEST_LIMIT:
         # The actions have to be of the format (num_agents,3)
         # The action format for each car is as in the CarRacing-v0 environment.
         action = my_policy(obs)
@@ -45,3 +46,5 @@ def test_refactoring():
         env.render()
 
         print("individual scores:", total_reward)
+
+    env.close()
