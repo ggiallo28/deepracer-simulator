@@ -1,8 +1,9 @@
 from shapely.geometry import Polygon, LineString, Point
-import sys, math, statistics
+import math, statistics
 import numpy as np
 
 GEOM_AREA_THRESHOLD = 5
+
 
 class DeepRacerParameters:
     def __init__(self, env):
@@ -195,10 +196,11 @@ class DeepRacerParameters:
 
         return params
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     from multi_deepracer import MultiDeepRacer
     import json
-    
+
     NUM_CARS = 2
 
     env = MultiDeepRacer(
@@ -207,7 +209,7 @@ if __name__ == '__main__':
         use_random_direction=True,
         backwards_flag=True,
         h_ratio=0.25,
-        use_ego_color=False,
+        use_ego_color=True,
     )
     env.reset()
 
